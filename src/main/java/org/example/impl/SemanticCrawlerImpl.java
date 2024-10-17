@@ -1,7 +1,5 @@
 package org.example.impl;
 
-import java.util.HashSet;
-import java.util.Set;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.Property;
@@ -27,44 +25,60 @@ public class SemanticCrawlerImpl implements SemanticCrawler {
 			StmtIterator triples = modelFactory.listStatements(modelFactory.createResource(resourceURI), (Property) null, (RDFNode) null);
 			graph.add(triples);
 			visitedURIs.add(resourceURI);
-
-			StmtIterator statements = modelFactory.listStatements(modelFactory.createResource(resourceURI), OWL.sameAs, (RDFNode) null);
-			while (statements.hasNext()) {
-				Statement statement = statements.nextStatement();
-				Resource object = (Resource) statement.getObject();
-
-				Set<String> set = new HashSet<>(visitedURIs);
-				boolean isVisited = set.contains(object.getURI());
-
-				System.out.println("\nNew URI obtained: " + object.getURI());
-				if (isVisited) System.out.println("URI already visited\n");
-
-				if (encoder.canEncode(object.getURI()) && !isVisited && !object.isAnon()) {
-					search(graph, object.getURI());
-					successfulURICounter++;
-				} else if (object.getURI() == null || object.isAnon()) {
-					System.out.println("\nBlank node: " + object.getId().toString() + "\n");
-					blankNodeTreatment(graph, object);
-				}
-			}
+	
+			// Busca URIs com OWL.sameAs
+			processSameAsStatements(graph, resourceURI, true);
+			processSameAsStatements(graph, resourceURI, false);
+	
 		} catch (Exception e) {
-			System.err.println("Error opening URI: " + e.getMessage());
+			System.err.println("Failed to process the URI: " + e.getMessage());
 		}
-		System.out.println("Successfully visited URIs: " + successfulURICounter);
+		System.out.println("Total successfully processed URIs: " + successfulURICounter);
+	}
+	
+	// Processa URIs relacionadas ao recurso utilizando a propriedade OWL.sameAs
+	private void processSameAsStatements(Model graph, String resourceURI, boolean isSubject) {
+		StmtIterator statements = isSubject ?
+			modelFactory.listStatements(null, OWL.sameAs, modelFactory.createResource(resourceURI)) :
+			modelFactory.listStatements(modelFactory.createResource(resourceURI), OWL.sameAs, (RDFNode) null);
+	
+		while (statements.hasNext()) {
+			Statement statement = statements.nextStatement();
+			Resource resource = isSubject ? (Resource) statement.getSubject() : (Resource) statement.getObject();
+			String uri = resource.getURI();
+	
+			// Verifica se a URI já foi visitada
+			boolean isVisited = visitedURIs.contains(uri);
+	
+			System.out.println("\nDiscovered new URI: " + uri);
+			if (isVisited) {
+				System.out.println("This URI has been visited before\n");
+			}
+	
+			// Verifica se a URI pode ser codificada e se não foi visitada
+			if (encoder.canEncode(uri) && !isVisited && !resource.isAnon()) {
+				search(graph, uri);
+				successfulURICounter++;
+			} else if (uri == null || resource.isAnon()) {
+				System.out.println("\nEncountered a blank node with ID: " + resource.getId().toString() + "\n");
+				blankNodeTreatment(graph, resource);
+			}
+		}
 	}
 
+	// Trata nós anônimos no modelo RDF de forma recursiva
 	private void blankNodeTreatment(Model model, Resource object) {
-		StmtIterator blankNodeTriples = model.listStatements(object, (Property) null, (RDFNode) null);
-		while (blankNodeTriples.hasNext()) {
-			Statement currentTriple = blankNodeTriples.nextStatement();
+		
+		StmtIterator triples = model.listStatements(object, (Property) null, (RDFNode) null);
+	
+		while (triples.hasNext()) {
+			Statement currentTriple = triples.nextStatement();
+			
 			model.add(currentTriple);
-		}
-		blankNodeTriples = model.listStatements(object, (Property) null, (RDFNode) null);
-		while (blankNodeTriples.hasNext()) {
-			Statement currentTriple = blankNodeTriples.nextStatement();
-			Resource objectNode = (Resource) currentTriple.getObject();
-			if (objectNode.isAnon()) {
-				blankNodeTreatment(model, objectNode);
+	
+			RDFNode objectNode = currentTriple.getObject();
+			if (objectNode.isResource() && ((Resource) objectNode).isAnon()) {
+				blankNodeTreatment(model, (Resource) objectNode);
 			}
 		}
 	}
